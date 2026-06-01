@@ -1,53 +1,65 @@
 # rtsp-redirect
 
-Простой HTTP-сервис: принимает ссылку на RTSP-поток и отдаёт редирект **301 Moved Permanently** с `Location`, указывающим на этот RTSP URL.
+Промежуточный сервис: RTSP знает только бэкенд, пользователю отдаётся короткая ссылка с редиректом **301**.
+
+## Схема
+
+```
+Бэкенд                             Пользователь / плеер
+  | POST /api/streams {url: rtsp}      |
+  |<-- {redirect_url: .../r/abc123}    |
+  |         redirect_url               |
+  |----------------------------------->|
+  |                                    | GET /r/abc123 → 301 → rtsp://...
+```
+
+## API
+
+### `POST /api/streams`
+
+```json
+{ "url": "rtsp://server:554/main/stream" }
+```
+
+Ответ:
+
+```json
+{
+  "redirect_url": "https://rtsp-redirect.onrender.com/r/a1b2c3d4...",
+  "token": "a1b2c3d4...",
+  "expires_at": "2026-05-29T09:00:00Z"
+}
+```
+
+### `GET /r/{token}`
+
+**301** + `Location: rtsp://...`
+
+### `GET /health`
+
+200 OK.
+
+## Примеры
+
+```bash
+curl -X POST "https://rtsp-redirect.onrender.com/api/streams" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"rtsp://b2o-vcore29.video.goodline.info:554/main/oooprovzor_59584"}'
+
+curl -i "https://rtsp-redirect.onrender.com/r/TOKEN_ИЗ_ОТВЕТА"
+```
 
 ## Запуск
 
 ```bash
-cd rtsp-redirect
 go run .
 ```
 
-Переменные окружения:
+На Render ничего настраивать не нужно — порт подставит платформа сама.
 
-| Переменная | По умолчанию | Описание |
-|------------|--------------|----------|
-| `PORT`     | `8080`       | Порт HTTP |
-| `BASE_URL` | —            | Базовый URL для `/link` (например `https://redirect.example.com`) |
-
-## API
-
-### `GET /redirect?url=<rtsp_url>`
-
-Ответ **301**, заголовок `Location: <rtsp_url>`.
-
-Пример:
-
-```bash
-curl -i "http://localhost:8080/redirect?url=rtsp%3A%2F%2Fuser%3Apass%4010.0.0.1%3A554%2Fstream"
-```
-
-### `GET /link?url=<rtsp_url>`
-
-JSON со ссылкой на HTTP-редирект (удобно отдать клиенту «промежуточную» ссылку):
-
-```json
-{
-  "redirect_url": "http://localhost:8080/redirect?url=rtsp%3A%2F%2F...",
-  "location": "rtsp://..."
-}
-```
-
-### `POST /redirect` или `POST /link`
-
-Тело формы: `url=rtsp://...` — то же поведение, что у GET.
-
-### `GET /health`
-
-Проверка живости (200 OK).
+Ссылка живёт **1 час**, потом 404.
 
 ## Ограничения
 
-- Разрешены только схемы `rtsp://` и `rtsps://`.
-- Параметр `url` передавайте в URL-encoded виде.
+- Токены в памяти — после перезапуска ссылки пропадают.
+- Браузер не откроет `rtsp://` — нужен VLC, ffmpeg или RTSP-клиент.
