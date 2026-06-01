@@ -7,32 +7,30 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"time"
 )
-
-const tokenTTL = time.Hour
 
 type server struct {
 	store *streamStore
 }
 
 type registerRequest struct {
+	ID  string `json:"id"`
 	URL string `json:"url"`
 }
 
 type registerResponse struct {
+	ID          string `json:"id"`
 	RedirectURL string `json:"redirect_url"`
-	Token       string `json:"token"`
-	ExpiresAt   string `json:"expires_at"`
+	URL         string `json:"url"`
 }
 
 func main() {
-	srv := &server{store: newStreamStore(tokenTTL)}
+	srv := &server{store: newStreamStore()}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", srv.handleHealth)
 	mux.HandleFunc("/api/streams", srv.handleRegisterStream)
-	mux.HandleFunc("/r/", srv.handleRedirectByToken)
+	mux.HandleFunc("/", srv.handleRedirectByCameraID)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -66,32 +64,41 @@ func (s *server) handleRegisterStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, expiresAt, err := s.store.create(rtspURL)
+	cameraID, err := resolveCameraID(req.ID, rtspURL)
 	if err != nil {
-		http.Error(w, "failed to create token", http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	redirectURL := publicURL(r, "/r/"+token)
+	s.store.upsert(cameraID, rtspURL)
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(registerResponse{
-		RedirectURL: redirectURL,
-		Token:       token,
-		ExpiresAt:   expiresAt.UTC().Format(time.RFC3339),
+		ID:          cameraID,
+		RedirectURL: publicURL(r, "/"+cameraID),
+		URL:         rtspURL,
 	})
 }
 
-func (s *server) handleRedirectByToken(w http.ResponseWriter, r *http.Request) {
-	token := strings.TrimPrefix(r.URL.Path, "/r/")
-	token = strings.Trim(token, "/")
-	if token == "" || strings.Contains(token, "/") {
+func (s *server) handleRedirectByCameraID(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	cameraID := strings.Trim(r.URL.Path, "/")
+	if cameraID == "" || strings.Contains(cameraID, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	if isReservedPath(cameraID) {
 		http.NotFound(w, r)
 		return
 	}
 
-	rtspURL, ok := s.store.get(token)
+	rtspURL, ok := s.store.get(cameraID)
 	if !ok {
-		http.Error(w, "link not found or expired", http.StatusNotFound)
+		http.Error(w, "camera not found", http.StatusNotFound)
 		return
 	}
 
