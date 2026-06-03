@@ -40,9 +40,15 @@ rtsp://vcore34.../ooprovzor_123  →  https://host/123   (та же ссылка
 }
 ```
 
-### `GET /{id}`
+### `GET /{id}` или `GET /{id}.m3u`
 
-**301 Moved Permanently** + `Location: rtsp://...`
+**200 OK** — M3U-плейлист с RTSP внутри (для VLC и других плееров):
+
+```
+#EXTM3U
+#EXTINF:-1,Camera 123
+rtsp://vcore22.video.goodline.info:554/main/ooprovzor_123
+```
 
 ### `GET /health`
 
@@ -71,17 +77,20 @@ Invoke-RestMethod -Uri "https://rtsp-redirect.onrender.com/api/streams" -Method 
 
 Ожидаешь `redirect_url: .../123`.
 
-### 3. Редирект
+### 3. Плейлист (открыть в VLC)
 
 ```powershell
-curl.exe -s -i "https://rtsp-redirect.onrender.com/123"
+curl.exe -s "https://rtsp-redirect.onrender.com/123"
 ```
+
+VLC: **Медиа → Открыть URL** → `https://rtsp-redirect.onrender.com/123`
 
 Ожидаешь:
 
 ```
-HTTP/1.1 301 Moved Permanently
-Location: rtsp://vcore22.video.goodline.info:554/main/ooprovzor_123
+#EXTM3U
+#EXTINF:-1,Camera 123
+rtsp://vcore22.video.goodline.info:554/main/ooprovzor_123
 ```
 
 ### 4. Камера переехала на vcore34 — обновляем RTSP
@@ -93,19 +102,19 @@ Invoke-RestMethod -Uri "https://rtsp-redirect.onrender.com/api/streams" -Method 
 
 `redirect_url` снова `.../123` — **не меняется**.
 
-### 5. Тот же redirect_url, новый RTSP
+### 5. Тот же redirect_url, новый RTSP в плейлисте
 
 ```powershell
-curl.exe -s -i "https://rtsp-redirect.onrender.com/123"
+curl.exe -s "https://rtsp-redirect.onrender.com/123"
 ```
 
-Ожидаешь `Location: rtsp://vcore34...`.
+Ожидаешь `rtsp://vcore34...` в теле M3U.
 
 ## Ограничения
 
 - ID извлекается из последнего сегмента пути: `ooprovzor_123` → `123`.
 - Данные в памяти: после рестарта Render нужно заново вызвать `POST /api/streams` (обычно делает бэкенд при старте / переезде камеры).
-- Браузер не откроет `rtsp://` — нужен VLC, ffmpeg или RTSP-клиент.
+- Открывать ссылку в VLC: **Медиа → Открыть URL** → `https://redirect-host/{id}`.
 
 ## Локально
 
