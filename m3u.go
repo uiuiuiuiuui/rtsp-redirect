@@ -16,5 +16,5 @@ func parseCameraIDFromPath(path string) string {
 
 func buildM3UPlaylist(cameraID, rtspURL string) string {
 	title := "Camera " + cameraID
-	return fmt.Sprintf("#EXTM3U\n#EXTINF:-1,%s\n%s\n", title, rtspURL)
+	return fmt.Sprintf("#EXTM3U\n#EXTVLCOPT:network-caching=1000\n#EXTINF:-1,%s\n%s\n", title, rtspURL)
 }

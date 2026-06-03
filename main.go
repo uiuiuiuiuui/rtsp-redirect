@@ -102,7 +102,8 @@ func (s *server) handleRedirectByCameraID(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+	w.Header().Set("Content-Type", "audio/x-mpegurl; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Content-Disposition", "inline; filename=\""+cameraID+".m3u\"")
 	_, _ = w.Write([]byte(buildM3UPlaylist(cameraID, rtspURL)))
 }
