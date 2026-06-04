@@ -4,7 +4,7 @@ import "sync"
 
 type streamStore struct {
 	mu    sync.RWMutex
-	items map[string]string
+	items map[string]string // без TTL: запись живёт до upsert через POST /api/streams
 }
 
 func newStreamStore() *streamStore {

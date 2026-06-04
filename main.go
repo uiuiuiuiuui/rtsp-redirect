@@ -5,12 +5,12 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 )
 
 type server struct {
-	store *streamStore
+	store  *streamStore
+	config appConfig
 }
 
 type registerRequest struct {
@@ -25,20 +25,24 @@ type registerResponse struct {
 }
 
 func main() {
-	srv := &server{store: newStreamStore()}
+	cfg := loadConfig()
+	srv := &server{
+		store:  newStreamStore(),
+		config: cfg,
+	}
+
+	go func() {
+		if err := startRTSPServer(cfg.rtspListen, srv.store); err != nil {
+			log.Fatalf("rtsp server: %v", err)
+		}
+	}()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", srv.handleHealth)
 	mux.HandleFunc("/api/streams", srv.handleRegisterStream)
-	mux.HandleFunc("/", srv.handleRedirectByCameraID)
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-	addr := ":" + port
-
-	log.Printf("rtsp-redirect listening on %s", addr)
+	addr := ":" + cfg.httpPort
+	log.Printf("http api listening on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, mux))
 }
 
@@ -75,55 +79,9 @@ func (s *server) handleRegisterStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(registerResponse{
 		ID:          cameraID,
-		RedirectURL: publicURL(r, "/"+cameraID),
+		RedirectURL: s.config.publicRTSPURL(cameraID),
 		URL:         rtspURL,
 	})
-}
-
-func (s *server) handleRedirectByCameraID(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	cameraID := parseCameraIDFromPath(r.URL.Path)
-	if cameraID == "" {
-		http.NotFound(w, r)
-		return
-	}
-	if isReservedPath(cameraID) {
-		http.NotFound(w, r)
-		return
-	}
-
-	rtspURL, ok := s.store.get(cameraID)
-	if !ok {
-		http.Error(w, "camera not found", http.StatusNotFound)
-		return
-	}
-
-	w.Header().Set("Content-Type", "audio/x-mpegurl; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Content-Disposition", "inline; filename=\""+cameraID+".m3u\"")
-	_, _ = w.Write([]byte(buildM3UPlaylist(cameraID, rtspURL)))
-}
-
-func publicURL(r *http.Request, path string) string {
-	host := r.Host
-	if host == "" {
-		host = "localhost:8080"
-	}
-	return requestScheme(r) + "://" + host + path
-}
-
-func requestScheme(r *http.Request) string {
-	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
-		return proto
-	}
-	if r.TLS != nil {
-		return "https"
-	}
-	return "http"
 }
 
 func validateRTSPURL(raw string) (string, error) {

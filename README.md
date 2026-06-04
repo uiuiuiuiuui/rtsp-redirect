@@ -1,32 +1,36 @@
 # rtsp-redirect
 
-Стабильные HTTP-ссылки на RTSP-потоки камер. ID камеры берётся из имени потока (`ooprovzor_123` → `123`).
-
-При переезде камеры на другой сервер бэкенд обновляет RTSP через `POST /api/streams`, а ссылка для пользователя остаётся той же:
+Стабильная **RTSP**-ссылка на поток камеры. При переезде камеры на другой vcore меняется только целевой RTSP в `Location`, стабильный URL не меняется.
 
 ```
-rtsp://vcore22.../ooprovzor_123  →  https://host/123
-rtsp://vcore34.../ooprovzor_123  →  https://host/123   (та же ссылка)
+Стабильно:  rtsp://redirect-host:8554/camera/key/59584
+            rtsp://redirect-host:8554/59584          (короткий путь)
+
+Было:       rtsp://vcore22.../oooprovzor_59584
+Стало:      rtsp://vcore34.../oooprovzor_59584
 ```
 
-## API
+Клиент делает `DESCRIBE` на стабильный URL → сервер отвечает **302 Found** + `Location: rtsp://vcore.../...` → клиент подключается к реальному потоку (VLC, ffmpeg, go2rtc и др. с поддержкой RTSP redirect).
+
+## Порты и переменные
+
+| Переменная | По умолчанию | Назначение |
+|------------|--------------|------------|
+| `PORT` | `8080` | HTTP API (`POST /api/streams`, `GET /health`) |
+| `RTSP_PORT` | `8554` | Порт RTSP-редиректа |
+| `RTSP_LISTEN` | `:8554` | Адрес bind RTSP (перекрывает `RTSP_PORT`) |
+| `RTSP_PUBLIC_HOST` | `127.0.0.1` | Хост в `redirect_url` (публичный IP/DNS) |
+| `RTSP_PUBLIC_PORT` | как `RTSP_PORT` | Порт в `redirect_url` |
+
+**Render** подходит только для HTTP API. RTSP нужен VPS/VM с открытым TCP **8554** (или своим портом).
+
+## API (HTTP, только регистрация)
 
 ### `POST /api/streams`
 
-Регистрация или обновление потока.
-
 ```json
 {
-  "url": "rtsp://vcore22.video.goodline.info:554/main/ooprovzor_123"
-}
-```
-
-Опционально явный id:
-
-```json
-{
-  "id": "123",
-  "url": "rtsp://vcore22.video.goodline.info:554/main/ooprovzor_123"
+  "url": "rtsp://vcore22.video.goodline.info:554/main/ooprovzor_59584"
 }
 ```
 
@@ -34,91 +38,56 @@ rtsp://vcore34.../ooprovzor_123  →  https://host/123   (та же ссылка
 
 ```json
 {
-  "id": "123",
-  "redirect_url": "https://rtsp-redirect.onrender.com/123",
-  "url": "rtsp://vcore22.video.goodline.info:554/main/ooprovzor_123"
+  "id": "59584",
+  "redirect_url": "rtsp://redirect-host:8554/camera/key/59584",
+  "url": "rtsp://vcore22.video.goodline.info:554/main/ooprovzor_59584"
 }
-```
-
-### `GET /{id}` или `GET /{id}.m3u`
-
-**200 OK** — M3U-плейлист с RTSP внутри (для VLC и других плееров):
-
-```
-#EXTM3U
-#EXTINF:-1,Camera 123
-rtsp://vcore22.video.goodline.info:554/main/ooprovzor_123
 ```
 
 ### `GET /health`
 
 200 OK.
 
-## Деплой на Render
+## RTSP (основной протокол)
 
-1. Закоммить и запушить в `master` репозитория `uiuiuiuiuui/rtsp-redirect`.
-2. Render подхватит сборку автоматически (`go build -o app`).
-3. Переменные окружения не нужны — Render сам задаёт `PORT`.
+### Стабильные URL
 
-## Полный цикл тестирования
+- `rtsp://{host}:{port}/camera/key/{id}` — рекомендуемый (как в ТЗ)
+- `rtsp://{host}:{port}/{id}` — короткий вариант
 
-### 1. Health
+### Поведение
+
+На `DESCRIBE` (и `SETUP` без сессии):
+
+```
+RTSP/1.0 302 Found
+Location: rtsp://vcore22.video.goodline.info:554/main/ooprovzor_59584
+```
+
+## Локальный запуск
 
 ```powershell
-curl.exe -s -w "`nHTTP:%{http_code}`n" "https://rtsp-redirect.onrender.com/health"
+$env:RTSP_PUBLIC_HOST = "127.0.0.1"
+go run .
 ```
-
-### 2. Регистрация на vcore22
 
 ```powershell
-$body = '{"url":"rtsp://vcore22.video.goodline.info:554/main/ooprovzor_123"}'
-Invoke-RestMethod -Uri "https://rtsp-redirect.onrender.com/api/streams" -Method POST -ContentType "application/json" -Body $body
+# Регистрация
+$body = '{"url":"rtsp://vcore22.video.goodline.info:554/main/ooprovzor_59584"}'
+Invoke-RestMethod -Uri "http://127.0.0.1:8080/api/streams" -Method POST -ContentType "application/json" -Body $body
+
+# Проверка redirect (ffmpeg)
+ffprobe -rtsp_transport tcp "rtsp://127.0.0.1:8554/camera/key/59584"
 ```
-
-Ожидаешь `redirect_url: .../123`.
-
-### 3. Плейлист (открыть в VLC)
-
-```powershell
-curl.exe -s "https://rtsp-redirect.onrender.com/123"
-```
-
-VLC: **Медиа → Открыть URL** → `https://rtsp-redirect.onrender.com/123`
-
-Ожидаешь:
-
-```
-#EXTM3U
-#EXTINF:-1,Camera 123
-rtsp://vcore22.video.goodline.info:554/main/ooprovzor_123
-```
-
-### 4. Камера переехала на vcore34 — обновляем RTSP
-
-```powershell
-$body = '{"url":"rtsp://vcore34.video.goodline.info:554/main/ooprovzor_123"}'
-Invoke-RestMethod -Uri "https://rtsp-redirect.onrender.com/api/streams" -Method POST -ContentType "application/json" -Body $body
-```
-
-`redirect_url` снова `.../123` — **не меняется**.
-
-### 5. Тот же redirect_url, новый RTSP в плейлисте
-
-```powershell
-curl.exe -s "https://rtsp-redirect.onrender.com/123"
-```
-
-Ожидаешь `rtsp://vcore34...` в теле M3U.
 
 ## Ограничения
 
-- ID извлекается из последнего сегмента пути: `ooprovzor_123` → `123`.
-- Данные в памяти: после рестарта Render нужно заново вызвать `POST /api/streams` (обычно делает бэкенд при старте / переезде камеры).
-- Открывать ссылку в VLC: **Медиа → Открыть URL** → `https://redirect-host/{id}`.
+- ID из имени потока: `ooprovzor_59584` → `59584`, или явный `id` в POST.
+- Данные в памяти — после рестарта снова `POST /api/streams`.
+- `RTSP_PUBLIC_HOST` обязателен на проде (не `127.0.0.1`).
 
-## Локально
+## Тесты
 
 ```bash
 go test ./...
-go run .
 ```
